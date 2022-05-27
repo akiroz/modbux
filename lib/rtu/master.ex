@@ -18,7 +18,9 @@ defmodule Modbux.Rtu.Master do
             active: false,
             uart_opts: nil,
             uart_pid: nil,
-            parent_pid: nil
+            parent_pid: nil,
+            hook_send_pre: nil,
+            hook_send_post: nil
 
   @doc """
   Starts a Modbus RTU Master process.
@@ -68,6 +70,20 @@ defmodule Modbux.Rtu.Master do
   """
   def state(pid) do
     GenServer.call(pid, :state)
+  end
+
+  @doc """
+  Register pre-send hook.
+  """
+  def hook_send_pre(pid, hook) do
+    GenServer.cast(pid, {:hook_send_pre, hook})
+  end
+
+  @doc """
+  Register post-send hook.
+  """
+  def hook_send_post(pid, hook) do
+    GenServer.cast(pid, {:hook_send_post, hook})
   end
 
   @doc """
@@ -179,7 +195,10 @@ defmodule Modbux.Rtu.Master do
     uart_frame = Rtu.pack_req(cmd)
     Logger.debug("(#{__MODULE__}) Frame: #{inspect(uart_frame <> <<0x00>>)}")
     UART.flush(state.uart_pid)
+    if is_function(state.hook_send_pre), do: state.hook_send_pre.()
     UART.write(state.uart_pid, uart_frame)
+    UART.flush(state.uart_pid, :transmit)
+    if is_function(state.hook_send_post), do: state.hook_send_post.()
 
     res =
       if state.active do
@@ -216,6 +235,16 @@ defmodule Modbux.Rtu.Master do
     }
 
     {:reply, :ok, new_state}
+  end
+
+  @impl true
+  def handle_cast({:hook_send_pre, hook}, state) do
+    {:noreply, Map.put(state, :hook_send_pre, hook)}
+  end
+
+  @impl true
+  def handle_cast({:hook_send_post, hook}, state) do
+    {:noreply, Map.put(state, :hook_send_post, hook)}
   end
 
   # Catch all clause
